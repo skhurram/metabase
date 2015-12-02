@@ -10,6 +10,7 @@
             (metabase.driver [h2 :refer [map->H2Driver]]
                              [mongo :refer [map->MongoDriver]]
                              [mysql :refer [map->MySQLDriver]]
+                             [oracle :refer [map->OracleDriver], :as oracle]
                              [postgres :refer [map->PostgresDriver]]
                              [redshift :refer [map->RedshiftDriver]]
                              [sqlite :refer [map->SQLiteDriver]]
@@ -17,17 +18,19 @@
             (metabase.models [field :refer [Field]]
                              [table :refer [Table]])
             (metabase.test.data [dataset-definitions :as defs]
-                                [h2 :as h2]
-                                [mongo :as mongo]
-                                [mysql :as mysql]
-                                [postgres :as postgres]
+                                h2
+                                mongo
+                                mysql
+                                oracle
+                                postgres
                                 [redshift :as redshift]
-                                [sqlite :as sqlite]
-                                [sqlserver :as sqlserver])
+                                sqlite
+                                sqlserver)
             [metabase.util :as u])
   (:import metabase.driver.h2.H2Driver
            metabase.driver.mongo.MongoDriver
            metabase.driver.mysql.MySQLDriver
+           metabase.driver.oracle.OracleDriver
            metabase.driver.postgres.PostgresDriver
            metabase.driver.redshift.RedshiftDriver
            metabase.driver.sqlite.SQLiteDriver
@@ -103,6 +106,11 @@
   (merge GenericSQLIDatasetMixin
          {:sum-field-type (constantly :BigIntegerField)}))
 
+(extend OracleDriver
+  IDataset
+  (merge GenericSQLIDatasetMixin
+         {:default-schema (constantly "public")}))
+
 
 (extend PostgresDriver
   IDataset
@@ -132,13 +140,15 @@
 
 (def ^:private engine->loader*
   "Map of dataset keyword name -> dataset instance (i.e., an object that implements `IDataset`)."
-  {:h2        (map->H2Driver        {:dbpromise (promise)})
-   :mongo     (map->MongoDriver     {:dbpromise (promise)})
-   :mysql     (map->MySQLDriver     {:dbpromise (promise)})
-   :postgres  (map->PostgresDriver  {:dbpromise (promise)})
-   :redshift  (map->RedshiftDriver  {:dbpromise (promise)})
-   :sqlite    (map->SQLiteDriver    {:dbpromise (promise)})
-   :sqlserver (map->SQLServerDriver {:dbpromise (promise)})})
+  (merge {:h2        (map->H2Driver        {:dbpromise (promise)})
+          :mongo     (map->MongoDriver     {:dbpromise (promise)})
+          :mysql     (map->MySQLDriver     {:dbpromise (promise)})
+          :postgres  (map->PostgresDriver  {:dbpromise (promise)})
+          :redshift  (map->RedshiftDriver  {:dbpromise (promise)})
+          :sqlite    (map->SQLiteDriver    {:dbpromise (promise)})
+          :sqlserver (map->SQLServerDriver {:dbpromise (promise)})}
+         (when (oracle/jdbc-driver-available?)
+           {:oracle (map->OracleDriver {:dbpromise (promise)})})))
 
 (def ^:const all-valid-engines
   "Set of names of all valid datasets."

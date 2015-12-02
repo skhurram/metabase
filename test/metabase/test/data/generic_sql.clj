@@ -117,7 +117,8 @@
         dest-table-name (name dest-table-name)]
     (format "ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s);"
             (qualify+quote-name loader database-name table-name)
-            (quot (format "FK_%s_%s_%s" table-name field-name dest-table-name))
+            ;; limit FK constraint name to 30 chars since Oracle doesn't support names longer than that
+            (quot (apply str (take 30 (format "fk_%s_%s_%s" table-name field-name dest-table-name))))
             (quot field-name)
             (qualify+quote-name loader database-name dest-table-name)
             (quot (pk-field-name loader)))))
@@ -168,7 +169,7 @@
       (k/insert entity (k/values (mapv (partial zipmap fields-for-insert)
                                        (for [row group]
                                          (for [v row]
-                                           (if (instance? java.util.Date v) (java.sql.Timestamp. (.getTime ^java.util.Date v))
+                                           (if (instance? java.util.Date v) (u/->Timestamp v)
                                                v)))))))))
 
 (defn default-execute-sql! [loader context dbdef sql]
@@ -176,18 +177,22 @@
     (when (and (seq sql)
                ;; make sure SQL isn't just semicolons
                (not (s/blank? (s/replace sql #";" ""))))
-      (try
-        (jdbc/execute! (database->spec loader context dbdef) [sql] :transaction? false, :multi? true)
-        (catch java.sql.SQLException e
-          (println "Error executing SQL:" sql)
-          (println (format "Caught SQLException:\n%s"
-                           (with-out-str (jdbc/print-sql-exception-chain e))))
-          (throw e))
-        (catch Throwable e
-          (println "Error executing SQL:" sql)
-          (println (format "Caught Exception: %s %s\n%s" (class e) (.getMessage e)
-                           (with-out-str (.printStackTrace e))))
-          (throw e))))))
+      ;; Remove excess semicolons, otherwise snippy DBs like Oracle will barf
+      (let [sql (s/replace sql #";+" ";")]
+        (println (u/format-color 'blue "[SQL] <<<%s>>>" sql))
+        (try
+          (jdbc/execute! (database->spec loader context dbdef) [sql] :transaction? false, :multi? true)
+          (catch java.sql.SQLException e
+            (println "Error executing SQL:" sql)
+            (println (format "Caught SQLException:\n%s"
+                             (with-out-str (jdbc/print-sql-exception-chain e))))
+            (throw e))
+          (catch Throwable e
+            (println "Error executing SQL:" sql)
+            (println (format "Caught Exception: %s %s\n%s" (class e) (.getMessage e)
+                             (with-out-str (.printStackTrace e))))
+            (throw e)))
+        (println (u/format-color 'blue "[OK]"))))))
 
 
 (def DefaultsMixin
@@ -211,12 +216,15 @@
 
 (defn sequentially-execute-sql!
   "Alternative implementation of `execute-sql!` that executes statements one at a time for drivers
-   that don't support executing multiple statements at once."
+   that don't support executing multiple statements at once.
+
+   Since there are some cases were you might want to execute compound statements without splitting, an upside-down ampersand (`⅋`) is understood as an
+   \"escaped\" semicolon in the resulting SQL statement."
   [loader context dbdef sql]
   (when sql
     (doseq [statement (map s/trim (s/split sql #";+"))]
       (when (seq statement)
-        (default-execute-sql! loader context dbdef statement)))))
+        (default-execute-sql! loader context dbdef (s/replace statement #"⅋" ";"))))))
 
 (defn- create-db! [loader {:keys [table-definitions], :as dbdef}]
   ;; Exec SQL for creating the DB
